@@ -1,0 +1,112 @@
+# SAE 2.03 - Forge Logicielle Sécurisée & Supervision
+# Servics : PostgreSQL, Gitea, Uptime Kuma
+# Noms et prénoms des personnes du groupe : MAYEUX Ounays, BOUDHIM Mehdi, EN NILI ZIANI Bilal
+
+Services:
+  # Service 1 : Base de données PostgreSQL
+  # IP fixe sur net-backend uniquement : 192.168.10.10
+  # Aucun port mappé sur l'hôte (port 5432 non mappé) = inaccessible de l'extérieur
+  postgres:
+    image: postgres:16 # Nom de l'image utilisé
+    container_name: sae_postgres # Nom du conteneur qui va héberger le service
+    restart: unless-stopped # Redémarre automatiquement le conteneur sauf si arrêté manuellement
+    environment:
+      POSTGRES_DB: gitea # Nom de la base de données
+      POSTGRES_USER: gitea # Nom de l'utilisateur Postgres
+      POSTGRES_PASSWORD: gitea_password # Mot de passe de la base de données
+    
+    # Création d'un volume pour la persistance des données
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      net-backend:
+        ipv4_address: 192.168.10.10 # Adresse IP assigné au conteneur
+
+  # Service 2 : Gitea (Forge Git)
+  # IP fixe sur net-backend : 192.168.10.20
+  # IP fixe sur net-frontend : 192.168.20.10
+
+  gitea:
+    image: gitea/gitea # Nom de l'image utilisé
+    container_name: sae_gitea # Nom du conteneur qui va héberger le service
+    restart: unless-stopped # Redémarre automatiquement le conteneur sauf si arrêté manuellement
+    depends_on:
+      - postgres
+    environment:
+      APP_NAME: "Gitea"
+      RUN_MODE: prod
+
+      # Connexion PostgreSQL via DNS interne Docker
+      # Docker résout "postgres" -> 192.168.10.10 automatiquement
+      GITEA__database__DB_TYPE: postgres # C'est ici qu'on détermine quel type de base de données utilisé (ex. MySQL, Postgres etc...) 
+      GITEA__database__HOST: postgres:5432 # Lien que Gitea doit utiliser pour avoir accès à la base de données
+      GITEA__database__NAME: gitea # C'est là qu'on met le nom de la base de données qu'on a mis ci-dessus
+      GITEA__database__USER: gitea # Ici l'utilisateur
+      GITEA__database__PASSWD: gitea_password # Et enfin le mot de passe 
+
+      # Configuration serveur
+      GITEA__server__HTTP_PORT: 3000
+      GITEA__server__SSH_PORT: 2222
+      GITEA__server__SSH_LISTEN_PORT: 22
+      GITEA__server__DOMAIN: localhost
+      GITEA__server__ROOT_URL: http://localhost:3000/
+
+    ports:
+      - "3000:3000" # Port 3000 mappé pour avoir accès à l'interface Gitea
+      - "2222:22" # Port 2222 mappé qui dévie vers 22 pour l'accès au SSH
+    volumes:
+      - gitea_data:/data
+    networks:
+      net-frontend:
+        ipv4_address: 192.168.20.10 # Adresse IP assigné au conteneur pour le net-frontend
+      net-backend:
+        ipv4_address: 192.168.10.20 # Adresse IP assigné au conteneur pour le net-backend
+
+  # Service 3 : Uptime Kuma
+  # IP fixe sur net-frontend uniquement : 192.168.20.20
+  # Surveille Gitea via DNS interne : http://gitea:3000
+  # Aucun accès possible à net-backend = PostgreSQL inaccessible
+
+  uptime-kuma:
+    image: louislam/uptime-kuma # Nom de l'image utilisé
+    container_name: sae_uptime_kuma # Nom du conteneur qui va héberger le service
+    restart: unless-stopped # Redémarre automatiquement le conteneur sauf si arrêté manuellement
+    ports:
+      - "3001:3001" # Port 3001 mappé pour avoir accès au tableau de bord Uptime-kuma
+    volumes:
+      - uptime_kuma_data:/app/data
+    networks:
+      net-frontend:
+        ipv4_address: 192.168.20.20 # Adresse IP assigné au conteneur
+
+# Volumes nommés
+
+volumes:
+  postgres_data:
+  gitea_data:
+  uptime_kuma_data:
+
+# Rappel réseaux
+#  Résolution DNS interne Docker :
+#  "postgres" = 192.168.10.10 (utilisé par Gitea)
+#  "gitea" = 192.168.20.10 (utilisé par Uptime Kuma)
+#
+#  net-backend (192.168.10.0/24) :
+#  postgres = 192.168.10.10
+#  gitea = 192.168.10.20
+#
+#  net-frontend (192.168.20.0/24) :
+#  gitea = 192.168.20.10
+#  uptime-kuma = 192.168.20.20
+
+networks:
+  net-backend:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 192.168.10.0/24 # C'est qu'on mets l'adresse réseau du net-backend
+  net-frontend:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 192.168.20.0/24 # C'est qu'on mets l'adresse réseau du net-frontend
